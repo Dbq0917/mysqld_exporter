@@ -73,7 +73,6 @@ type Exporter struct {
 	dsn      string
 	provider auth.Provider
 	scrapers []Scraper
-	instance *instance
 
 	enableLockWaitTimeout bool
 	lockWaitTimeout       int
@@ -219,7 +218,6 @@ func (e *Exporter) scrape(ctx context.Context, ch chan<- prometheus.Metric) floa
 		return 0.0
 	}
 	defer instance.Close()
-	e.instance = instance
 
 	pingCtx, pingCancel := e.withQueryTimeoutContext(ctx)
 	defer pingCancel()

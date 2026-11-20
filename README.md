@@ -89,6 +89,9 @@ Sample config file for multiple configurations
 If your password contains a dollar sign (`$`) and you don't want it to be interpreted as an environment variable,
 escape it by doubling it (`$$`). In the example above, the password for `client.servers2` is `MY_$ECRET`.
 
+A section can also set `database` to choose the default schema for that target. Each section's connection settings are
+applied independently when its connections are rebuilt.
+
 On the prometheus side you can set a scrape config as follows
 
         - job_name: mysql # To get metrics about the mysql exporter’s targets

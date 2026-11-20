@@ -47,8 +47,6 @@ var (
 		UnescapeValueDoubleQuotes: true,
 	}
 
-	err error
-
 	// Use the same pattern of TLS version strings as the mysql client binary.
 	tlsVersions = map[string]uint16{
 		"TLSv1.0": tls.VersionTLS10,
@@ -313,6 +311,7 @@ type MySqlConfig struct {
 	User                  string `ini:"user"`
 	Password              string `ini:"password"`
 	Host                  string `ini:"host"`
+	Database              string `ini:"database"`
 	Port                  int    `ini:"port"`
 	Socket                string `ini:"socket"`
 	EnableCleartextPlugin bool   `ini:"enable-cleartext-plugin"`
@@ -525,6 +524,7 @@ func (m MySqlConfig) FormDSN(target string, configSectionName string) (string, e
 	config := mysql.NewConfig()
 	config.User = m.User
 	config.Passwd = m.Password
+	config.DBName = m.Database
 	config.Net = "tcp"
 	if target == "" {
 		if m.Socket == "" {
@@ -545,7 +545,7 @@ func (m MySqlConfig) FormDSN(target string, configSectionName string) (string, e
 		config.Net = "unix"
 		config.Addr = target[len(prefix):]
 	} else {
-		if _, _, err = net.SplitHostPort(target); err != nil {
+		if _, _, err := net.SplitHostPort(target); err != nil {
 			return "", fmt.Errorf("failed to parse target: %s", err)
 		}
 		config.Addr = target

@@ -32,7 +32,18 @@ const (
 	FlavorMariaDB = "mariadb"
 )
 
+// instanceConfig is owned by a single instance. Keeping the complete DSN and
+// pool settings here ensures reconnects cannot borrow another target's state.
+type instanceConfig struct {
+	dsn             string
+	maxOpenConns    int
+	maxIdleConns    int
+	connMaxLifetime time.Duration
+	provider        auth.Provider
+}
+
 type instance struct {
+	config            instanceConfig
 	db                *sql.DB
 	flavor            string
 	version           semver.Version
@@ -40,40 +51,65 @@ type instance struct {
 }
 
 func newInstance(ctx context.Context, dsn string, maxOpenConns, maxIdleConns int, connMaxLifetime time.Duration, provider auth.Provider) (*instance, error) {
-	i := &instance{}
-	connector, err := auth.OpenConnector(dsn, provider)
-	if err != nil {
+	i := &instance{
+		config: instanceConfig{
+			dsn:             dsn,
+			maxOpenConns:    maxOpenConns,
+			maxIdleConns:    maxIdleConns,
+			connMaxLifetime: connMaxLifetime,
+			provider:        provider,
+		},
+	}
+	if err := i.connect(ctx); err != nil {
 		return nil, err
 	}
+	return i, nil
+}
+
+// connect builds a private pool from this instance's own connection settings.
+func (i *instance) connect(ctx context.Context) error {
+	connector, err := auth.OpenConnector(i.config.dsn, i.config.provider)
+	if err != nil {
+		return err
+	}
 	db := sql.OpenDB(connector)
-	db.SetMaxOpenConns(maxOpenConns)
-	db.SetMaxIdleConns(maxIdleConns)
-	db.SetConnMaxLifetime(connMaxLifetime)
-	i.db = db
+	db.SetMaxOpenConns(i.config.maxOpenConns)
+	db.SetMaxIdleConns(i.config.maxIdleConns)
+	db.SetConnMaxLifetime(i.config.connMaxLifetime)
 
 	version, versionString, err := queryVersion(ctx, db)
 	if err != nil {
 		db.Close()
-		return nil, err
+		return err
 	}
 
-	i.version = version
-
-	versionMajorMinor, err := strconv.ParseFloat(fmt.Sprintf("%d.%d", i.version.Major, i.version.Minor), 64)
+	versionMajorMinor, err := strconv.ParseFloat(fmt.Sprintf("%d.%d", version.Major, version.Minor), 64)
 	if err != nil {
 		db.Close()
-		return nil, err
+		return err
 	}
 
-	i.versionMajorMinor = versionMajorMinor
-
+	flavor := FlavorMySQL
 	if strings.Contains(strings.ToLower(versionString), "mariadb") {
-		i.flavor = FlavorMariaDB
-	} else {
-		i.flavor = FlavorMySQL
+		flavor = FlavorMariaDB
 	}
 
-	return i, nil
+	i.db = db
+	i.version = version
+	i.versionMajorMinor = versionMajorMinor
+	i.flavor = flavor
+	return nil
+}
+
+// reconnect replaces only this instance's pool. The instance's immutable
+// connection settings are reused, so another target's DSN or session parameters
+// can never be picked up.
+func (i *instance) reconnect(ctx context.Context) error {
+	if i.db != nil {
+		_ = i.db.Close()
+		i.db = nil
+	}
+	return i.connect(ctx)
 }
 
 func (i *instance) getDB() *sql.DB {
@@ -81,16 +117,26 @@ func (i *instance) getDB() *sql.DB {
 }
 
 func (i *instance) Close() error {
+	if i.db == nil {
+		return nil
+	}
+	defer func() {
+		i.db = nil
+	}()
 	return i.db.Close()
 }
 
-// Ping checks connection availability and possibly invalidates the connection if it fails.
+// Ping checks connection availability and rebuilds this instance's pool if the
+// existing connection cannot be used.
 func (i *instance) Ping(ctx context.Context) error {
+	if i.db == nil {
+		return i.connect(ctx)
+	}
 	if err := i.db.PingContext(ctx); err != nil {
-		if cerr := i.Close(); cerr != nil {
+		if rerr := i.reconnect(ctx); rerr != nil {
 			return err
 		}
-		return err
+		return i.db.PingContext(ctx)
 	}
 	return nil
 }

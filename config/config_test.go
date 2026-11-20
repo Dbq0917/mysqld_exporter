@@ -394,6 +394,23 @@ func TestFormDSN(t *testing.T) {
 	})
 }
 
+func TestFormDSNDatabase(t *testing.T) {
+	cfg := MySqlConfig{
+		User:     "exporter",
+		Password: "secret",
+		Host:     "db.example",
+		Database: "metrics",
+	}
+
+	dsn, err := cfg.FormDSN("", "client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "exporter:secret@tcp(db.example:3306)/metrics"; dsn != want {
+		t.Fatalf("dsn = %q, want %q", dsn, want)
+	}
+}
+
 func TestFormDSNWithSslSkipVerify(t *testing.T) {
 	var (
 		c = AuthConfigHandler{
